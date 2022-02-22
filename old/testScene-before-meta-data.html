@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<title>My first three.js app</title>
+		<style>
+			body { margin: 0; }
+            #data-selection{
+                height: 20px;
+            }
+            #tooltip {
+                position: fixed;
+                left: 0;
+                top: 0;
+                min-width: 100px;
+                text-align: left;
+                padding: 5px 12px;
+                font-family: monospace;
+                background: #c9c9c9;
+                display: none;
+                opacity: 0;
+                border: 1px solid black;
+                border-radius: 3px;
+            }
+		</style>
+		<script src="./three.js"></script>
+		<script src="./chroma.js-master/chroma.js"></script>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+        <script type="x-shader/x-fragment" id="vertexshader-token">
+            uniform float scale;
+
+            varying vec4 gcolor;
+            void main() {
+                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                gl_Position = projectionMatrix * mvPosition;
+
+                gl_PointSize = 5.0 * scale / length(mvPosition.xyz); // Adjust point size here!
+
+                gcolor = vec4(color, 1.0);
+            }
+        </script>
+        <script type="x-shader/x-fragment" id="fragmentshader-token">
+            varying vec4 gcolor;
+            void main() {
+                // this is the part that clips the point into a circle
+                float distance = length(4.0 * gl_PointCoord - 2.0);
+                if (distance > 2.0) {
+                    discard;
+                }
+                if (gcolor.x < 0.01 && gcolor.y < 0.01 && gcolor.z < 0.01) {
+                    discard;
+                }
+                gl_FragColor = gcolor -  distance / 40.0;
+            }
+        </script>
+	</head>
+	<body>
+
+        <div id="data-selection">
+            <input type="file" id="input"> Choose file to read here </input>
+        </div>
+        <div id="tooltip"></div>
+
+        <div id="container"></div>
+		<script type="module">
+            import { OrbitControls } from 'https://unpkg.com/three/examples/jsm/controls/OrbitControls.js';
+            import { GUI } from './jsm/libs/dat.gui.module.js';
+
+            let readFile = "../word_similarity_result/graph/TNG-100/0-0.txt"
+            let firstFile = true; // We want this to be false after loading the first file so that the points dont shift around
+
+            let group
+            let container, stat;
+			let camera, scene, renderer;
+			let particles;
+			let pointCloud;
+            let controls;
+
+            let gui;
+
+            let origini = 0;
+            let originAttr = '';
+            let originX = 0;
+            let originY = 0;
+            let originZ = 0;
+
+            let raycaster, mouse = new THREE.Vector2(), INTERSECTED;
+            let originalHEX;
+            
+			var maxParticleCount = 1000;
+            const particleData = [];
+            let particleConnectionWeight;
+            let particleWeight;
+			let particlePositions;
+            let particleColor;
+            let topEdgeWeight = -1;
+            let topNodeWeight = -1;
+            let nodeWeightThreshold = 0; // Use this to filter out low weight nodes
+            let connWeightThreshold = 0; // Use this to filter out low slime mold connection
+
+            let idAvailable = 145; // MODIFY THIS: all id below this number is considered loadable
+
+            // Allow linear intepolation between two colors based on distance
+            var closestRGB = chroma('#f2190a');
+            var farthestRGB = chroma('#293366');
+            var originalRGB = [0, 0, 0];
+            var colorRatioPow = 0.5;
+
+            const inputElement = document.getElementById("input");
+            inputElement.addEventListener("change", handleFiles, false);
+
+            init();
+            animate();
+
+            function init(){
+                container = document.getElementById( 'container' );
+
+                raycaster = new THREE.Raycaster();
+                raycaster.params.Points.threshold = 3;
+                document.addEventListener('mousemove', onDocumentMouseMove, false);
+
+                scene = new THREE.Scene();
+                camera = new THREE.PerspectiveCamera(45, 
+                    window.innerWidth/window.innerHeight, 1, 4000);
+                camera.position.z = 800;
+                
+                // REQUIRED - For camera control
+			    controls = new OrbitControls( camera, container );
+				//controls.minDistance = 0;
+                
+                // REQUIRED - group to add everything in
+                group = new THREE.Group();
+                scene.add(group);
+
+                // REQUIRED - add meshes, add both point and edge (Should be reading data)
+                setUpGraphMesh([]);
+                
+                // REQUIRED
+                renderer = new THREE.WebGLRenderer();
+                renderer.setSize(window.innerWidth, window.innerHeight-20);
+                document.body.appendChild(renderer.domElement);
+                
+				container.appendChild( renderer.domElement );
+
+                // REQUIRED - GUI Setup
+
+                gui = new GUI();
+
+                const GUIparam = {
+                    'colorRatioPow': 0.5,
+                    'nodeWeightThreshold': 0,
+                    'particleConnectionWeight': 0
+                };
+
+                gui.add(GUIparam, 'colorRatioPow', 0.05, 1, 0.005).name('Color Gradient').onChange(function(){
+                    colorRatioPow = GUIparam.colorRatioPow;
+                    updatePtsColor();
+                })
+                
+                gui.add(GUIparam, 'nodeWeightThreshold', 0, 0.5, 0.005).name('Lowest Weight').onChange(function(){
+                    nodeWeightThreshold = GUIparam.nodeWeightThreshold;
+                    updatePtsColor();
+                })
+                
+                gui.add(GUIparam, 'particleConnectionWeight', 0, 100000).name('Lowest Connect').onChange(function(){
+                    connWeightThreshold = GUIparam.particleConnectionWeight;
+                    updatePtsColor();
+                })
+                
+                window.addEventListener( 'resize', onWindowResize, false );
+                document.addEventListener('dblclick', onDocumentDoubleClick);
+                
+            }
+
+            function onWindowResize() {
+
+                const size = new THREE.Vector2()
+                renderer.getSize( size );
+
+                camera.aspect = size.x / size.y;
+                camera.updateProjectionMatrix();
+
+                renderer.setSize( size.x, size.y );
+
+            }
+
+            function onDocumentMouseMove(event) {
+
+                event.preventDefault();
+
+                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            }
+
+            // Check if the point being clicked on can be navigated, if so, load the point    
+            function onDocumentDoubleClick(event) {
+                event.preventDefault();
+                if (INTERSECTED) {
+                    if (particleData[INTERSECTED].id < idAvailable){ // Check if point is navigatable
+                        console.log("LOADING");
+                        getFileObject('12-12.txt', function (fileObject) {
+                            loadFile(fileObject);
+                        }); 
+                    }
+                    console.log(particleData[INTERSECTED].id + "/" + idAvailable.toString());
+                }
+            }
+
+            function animate() {
+				pointCloud.geometry.attributes.position.needsUpdate = true;
+				pointCloud.geometry.attributes.color.needsUpdate = true;
+
+				requestAnimationFrame( animate );
+
+				render();
+            }
+
+            function render() {
+
+                const time = Date.now() * 0.001;
+
+                raycastMouse();
+
+                renderer.render( scene, camera );
+
+            }
+
+            function raycastMouse() {
+                raycaster.setFromCamera( mouse, camera );
+                var intersects = raycaster.intersectObject(pointCloud);
+
+                if (intersects.length > 0){
+
+                    var tobeINTERSECTED = null;
+                    for (var i = 0; i < intersects.length; i++) {
+                        if (particleWeight[intersects[i].index] >= nodeWeightThreshold &&
+                            particleConnectionWeight[intersects[i].index]>= connWeightThreshold){
+
+                            tobeINTERSECTED = intersects[i].index;
+                            break;
+                        }
+                    }
+
+                    if ( tobeINTERSECTED && INTERSECTED != intersects[0].index ) {
+
+                        particleColor[INTERSECTED * 3] = originalRGB[0];
+                        particleColor[INTERSECTED * 3 + 1] = originalRGB[1];
+                        particleColor[INTERSECTED * 3 + 2] = originalRGB[2];
+                        
+                        INTERSECTED = tobeINTERSECTED;
+
+                        originalRGB = [particleColor[INTERSECTED * 3],
+                                    particleColor[INTERSECTED * 3 + 1], 
+                                    particleColor[INTERSECTED * 3 + 2]];
+
+                        particleColor[INTERSECTED * 3] = 1;
+                        particleColor[INTERSECTED * 3 + 1] = 1;
+                        particleColor[INTERSECTED * 3 + 2] = 1;
+                        
+                        var particle_text = particleData[INTERSECTED].name;
+                        var particle_pos = new THREE.Vector3(particlePositions[INTERSECTED*3],
+                                            particlePositions[INTERSECTED*3 + 1], 
+                                            particlePositions[INTERSECTED*3 + 2]);
+
+                        var particle_mesg = particle_text;
+
+                        showTooltip(particle_pos, particle_mesg);
+                    }
+                }
+                else{
+                    if (INTERSECTED){
+                        particleColor[INTERSECTED * 3] = originalRGB[0];
+                        particleColor[INTERSECTED * 3 + 1] = originalRGB[1];
+                        particleColor[INTERSECTED * 3 + 2] = originalRGB[2];
+                    }
+                    INTERSECTED = null;
+                    hideTooltip();
+                }
+            }
+            
+            function showTooltip(objectPosition, text) {
+                var divElement = $("#tooltip");
+
+                divElement.css({
+                    display: "block",
+                    opacity: 0.0
+                });
+
+                var canvasHalfWidth = renderer.domElement.offsetWidth / 2;
+                var canvasHalfHeight = renderer.domElement.offsetHeight / 2;
+
+                var tooltipPosition = objectPosition.clone().project(camera);
+                tooltipPosition.x = (tooltipPosition.x * canvasHalfWidth) + canvasHalfWidth + renderer.domElement.offsetLeft;
+                tooltipPosition.y = -(tooltipPosition.y * canvasHalfHeight) + canvasHalfHeight + renderer.domElement.offsetTop;
+
+                var tooltipWidth = divElement[0].offsetWidth;
+                var tooltipHeight = divElement[0].offsetHeight;
+
+                divElement.css({
+                    left: `${tooltipPosition.x + tooltipWidth / 4}px`,
+                    top: `${tooltipPosition.y + tooltipHeight / 4}px`
+                });
+
+                divElement.text(text);
+                divElement.css({opacity: 0.7});
+            }
+
+            function hideTooltip() {
+                var divElement = $("#tooltip");
+                if (divElement) {
+                    divElement.css({
+                        display: "none"
+                    });
+                }
+            }
+
+            function handleFiles() {
+                const selectedFile = document.getElementById('input').files[0];
+                loadFile(selectedFile);
+            }
+
+            function loadFile(selectedFile = null) {
+                originAttr = selectedFile.name.split('.')[0];
+
+                let reader = new FileReader();
+
+                reader.onload = (e) => {
+                    const file = e.target.result;
+                    var lines = file.split(/\r\n|\n/);
+                    lines = lines.slice(0, lines.length - 1);
+
+                    //console.log(lines.slice(0, 10));
+                    
+                    scene.remove(scene.children[0]);
+
+                    group = new THREE.Group();
+                    scene.add(group); 
+
+                    setUpGraphMesh(lines);
+                }
+
+                var a = reader.readAsText(selectedFile);
+            }
+
+            function setUpGraphMesh(lines){
+                maxParticleCount = lines.length / 2;
+
+                // ACHTUNG: THIS IS LIMITING THE NUMBER OF NODES 
+                if (maxParticleCount > 1000000)
+                    maxParticleCount = 1000000;
+                console.log("Number of points: " + maxParticleCount.toString());
+
+				const pMaterial = new THREE.ShaderMaterial( {
+                    uniforms: {
+                        scale: {type: 'f', value: window.innerHeight / 2}
+                    },
+
+                    vertexShader: document.getElementById( 'vertexshader-token' ).textContent,
+                    fragmentShader: document.getElementById( 'fragmentshader-token' ).textContent,
+                    
+					vertexColors:   true,
+                    blending:       THREE.CustomBlending,
+                    blendSrc:       THREE.OneFactor,
+                    blendDst:       THREE.ZeroFactor,
+                    depthTest:      true,
+                    depthWrite:     true,
+                    transparent:    true
+				} );
+
+                particles = new THREE.BufferGeometry();
+                particlePositions = new Float32Array( maxParticleCount * 3 );
+                particleColor = new Float32Array( maxParticleCount * 3 );
+                particleConnectionWeight = new Float32Array( maxParticleCount);
+                particleWeight = new Float32Array( maxParticleCount);
+                particleData.length = 0;
+
+				for ( let i = 0; i < maxParticleCount; i ++ ) {
+                    var wordContent = lines[i * 2];
+
+                    var wordGraphAttribute = lines[i * 2 + 1]
+                                    .replace('(', '')
+                                    .replace('[', '')
+                                    .replace(']', '')
+                                    .replace(')', '');
+                    wordGraphAttribute = wordGraphAttribute.split(',');
+
+                    const id = wordGraphAttribute[0];
+                    const edgeWeight = eval(wordGraphAttribute[1]);
+                    const nodeWeight = eval(wordGraphAttribute[2]);
+					const x = eval(wordGraphAttribute[3]);
+					const y = eval(wordGraphAttribute[4]);
+                    const z = eval(wordGraphAttribute[5]);
+                    
+                    if (id == originAttr){
+                        origini = i;
+
+                        if (firstFile){
+                            // We want this to be false after loading the first file so that the points dont shift around
+                            firstFile = false;
+                            originX = x;
+                            originY = y;
+                            originZ = z;
+                        }
+                    }
+
+					particlePositions[ i * 3 ] = x;
+					particlePositions[ i * 3 + 1 ] = y;
+                    particlePositions[ i * 3 + 2 ] = z;
+                    particleColor[ i * 3 ] = 1;
+                    particleColor[ i * 3 + 1 ] = 1;
+                    particleColor[ i * 3 + 2 ] = 1;
+
+					// add it to the geometry
+					particleData.push( {
+                        id: id,
+                        name: wordContent
+                    } );
+
+                    // add edge weight
+                    particleConnectionWeight[i] = edgeWeight;
+                    if (edgeWeight > topEdgeWeight){
+                        topEdgeWeight = edgeWeight;
+                    }
+                    
+                    // add point weight
+                    particleWeight[i] = nodeWeight;
+                    if (nodeWeight > topNodeWeight){
+                        topNodeWeight = nodeWeight;
+                    }
+                }
+                
+                adjustGraphPos();
+
+				particles.setAttribute( 'position', new THREE.BufferAttribute( particlePositions, 3 ).setUsage( THREE.DynamicDrawUsage ) );
+				particles.setAttribute( 'color', new THREE.BufferAttribute( particleColor, 3 ).setUsage( THREE.DynamicDrawUsage ) );
+
+				// create the particle system
+                pointCloud = new THREE.Points( particles, pMaterial );
+
+				group.add( pointCloud );
+
+                // Update Node Weight filter param
+                if (gui){
+                    gui.__controllers[1].initialValue = 0;
+                    //gui.__controllers[1].__max= topNodeWeight;
+                    gui.__controllers[1].setValue(0);
+                }
+                nodeWeightThreshold = 0;
+                connWeightThreshold = 0;
+
+                updatePtsColor();
+            }
+
+            // Adjust so that the origini is at the origin point
+            function adjustGraphPos() {
+                var scaleFactor = 10;
+
+				for ( let i = 0; i < maxParticleCount; i ++ ) {
+					particlePositions[ i * 3 ] -= originX;
+					particlePositions[ i * 3 + 1 ] -= originY;
+                    particlePositions[ i * 3 + 2 ] -= originZ;
+					particlePositions[ i * 3 ] *= scaleFactor;
+					particlePositions[ i * 3 + 1 ] *= scaleFactor;
+                    particlePositions[ i * 3 + 2 ] *= scaleFactor;
+                }
+            }
+
+            // Update the color value for all points
+            function updatePtsColor() {
+                for (let i = 0; i < maxParticleCount; i++) {
+                    if (particleWeight[i] < nodeWeightThreshold ||
+                         particleConnectionWeight[i] < connWeightThreshold) { // Change the point if below minimum weight
+                        particleColor[ i * 3 ] = 0.0;
+                        particleColor[ i * 3 + 1 ] = 0.0;
+                        particleColor[ i * 3 + 2] = 0.0;
+                    } 
+                    else {
+                        if (particleData[i].id == originAttr) { // Color for origin point
+                            particleColor[ i * 3 ] = 224 / 255;
+                            particleColor[ i * 3 + 1 ] = 144 / 255;
+                            particleColor[ i * 3 + 2 ] = 154 / 255;
+                        }
+                        else if (particleData[i].id < idAvailable) { // Change color if the point can be navigated
+                            particleColor[ i * 3 ] = 84 / 255;
+                            particleColor[ i * 3 + 1 ] = 196 / 255;
+                            particleColor[ i * 3 + 2 ] = 114 / 255;
+                        }
+                        else { // Change color based on slime connection
+                            var ratio = Math.pow(particleConnectionWeight[i] / topEdgeWeight, colorRatioPow);
+                            var finalColor = chroma.mix(farthestRGB, closestRGB, ratio, 'hsl').rgb();
+                            particleColor[ i * 3 ] = finalColor[0] / 255;
+                            particleColor[ i * 3 + 1 ] = finalColor[1] / 255;
+                            particleColor[ i * 3 + 2 ] = finalColor[2] / 255;
+                        }
+                    }
+                }
+            }
+
+            // #######################################################
+            //      COPY N PASTE FROM THE WEB
+            // #######################################################
+
+            var getFileBlob = function (url, cb) {
+                var xhr = new XMLHttpRequest();
+                xhr.open("GET", url);
+                xhr.responseType = "blob";
+                xhr.addEventListener('load', function() {
+                    cb(xhr.response);
+                });
+                xhr.send();
+            };
+
+            var blobToFile = function (blob, name) {
+                blob.lastModifiedDate = new Date();
+                blob.name = name;
+                return blob;
+            };
+
+            var getFileObject = function(filePathOrUrl, cb) {
+                var splitUrl = filePathOrUrl.split('/');
+                getFileBlob(filePathOrUrl, function (blob) {
+                    cb(blobToFile(blob, splitUrl[splitUrl.length - 1]));
+                });
+            };
+
+		</script>
+	</body>
+</html>
