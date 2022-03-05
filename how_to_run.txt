@@ -1,2 +1,7 @@
+if you pulled from github, the current version of index.html is github_index.html, simply switch the index.html to local_index.html
+	
+
 python -m http.server 8000
-test!!
+and just go to localhost:8000
+
+if you wanna quick access to music embedding, go to localhost:8000?music=true
