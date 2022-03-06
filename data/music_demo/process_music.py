@@ -18,7 +18,12 @@ with open('test_data', 'r') as original_data:
         if len(numbers) != 3:
             continue
 
-        pnt_array.append(numbers[0] + ' ' + numbers[1] + ' ' + numbers[2])
+        # Scale points
+        scale_factor = 1.6
+        for i in range(len(numbers)):
+            numbers[i] = str(eval(numbers[i]) * scale_factor)
+
+        pnt_array.append(numbers[0]  + ' ' + numbers[1] + ' ' + numbers[2])
 
 
 number_of_pnt = len(pnt_array)
