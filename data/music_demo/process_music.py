@@ -32,11 +32,10 @@ with open('full_data', 'w+') as full_data:
     with open('meta-main.txt', 'w+') as meta_main:
         with open('0.txt', 'w+') as main_data:
             for enum_pnt in enumerate(pnt_array):
-                section = music_section_names[
-                        math.floor(enum_pnt[0] * number_of_section / number_of_pnt)
-                        ]
+                section_index = math.floor(enum_pnt[0] * number_of_section / number_of_pnt)
+                section = music_section_names[section_index]
 
-                full_data.write('music' + '_' + section + '\n')
+                full_data.write('section' + str(section_index+1) + '/' + str(number_of_section) + '_' + section + '\n')
                 full_data.write(enum_pnt[1] + ' ')
 
                 if enum_pnt[0] == 0:
@@ -44,7 +43,7 @@ with open('full_data', 'w+') as full_data:
 
                     # writing to meta-main
                     meta_main.write('0\n')
-                    meta_main.write('0 ' + 'music' + '_' + section + '\n')
+                    meta_main.write('0 ' + 'section' + str(section_index+1) + '/' + str(number_of_section) + '_' + section + '\n')
                 else:
                     full_data.write('0\n')
                 
