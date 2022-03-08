@@ -578,7 +578,7 @@
                                         console.log("LOADING " + id.toString());
                                         
                                         originAttr = id;
-                                        getFileObject(traceDataDirectory + id.toString() +".txt",
+                                        getFileObject(dataDirectory + id.toString() +".txt",
                                                             function (anchorData) {
                                             let reader = new FileReader();
 
@@ -593,7 +593,7 @@
                                         }); 
                                     }); 
 
-                                    /*  CHOOSING DATA TRACE, CURRENTLY NOT USED
+                                    /*  CHOOSING DATA TRACE, CURRENTLY NOT USED, IF SWITCHED ON, PLZ CHANGE LINE 581 FROM dataDirection to Data trace directory
                                     dataTraceController = gui.add(GUIparam, 'selectTraceDataset', datasetList).name('Select Trace Dataset').onChange(function(){
                                         traceDataDirectory = GUIparam.selectTraceDataset;
 
