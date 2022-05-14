@@ -51,9 +51,11 @@ Double click on anchor points (yellow) to view slime data from that anchor point
 
 ## Authors
 
-This web visualization tool was created by a team of researchers at University of California, Santa Cruz.
+This web visualization tool was created by a team of researchers at University of California, Santa Cruz, Dept. of Computational Media:
 
-- Dept. of Computational Media: Hongwei (Henry) Zhou, Oskar Elek, and Angus G. Forbes
+- Hongwei (Henry) Zhou
+- [Oskar Elek](https://elek.pub/)
+- [Angus G. Forbes](https://creativecoding.soe.ucsc.edu/angus/)
 
 This work was published as Hongwei Zhou's [M.S. thesis](https://escholarship.org/uc/item/6zj1r9ch#main).
 
