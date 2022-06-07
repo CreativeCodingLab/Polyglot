@@ -20,7 +20,7 @@ You can use the web application by going to: [https://creativecodinglab.github.i
 
 ## Quick Reference<br/>
 Mouse: navigate in 3D <br/>
-Shift: anchor-focus mode<br/>
+Left-Shift: anchor-focus mode<br/>
 
 Double click on anchor points (yellow) to view slime data from that anchor point.
 
